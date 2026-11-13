@@ -23,8 +23,10 @@ if str(ROOT) not in sys.path:
 
 from kvstore.config import DEFAULT_CONFIG, ClusterConfig, load_config  # noqa: E402
 from kvstore.ring import ConsistentHashRing  # noqa: E402
+from kvstore.timer_resolution import use_1ms_timer  # noqa: E402
 
 RESULTS = ROOT / "results"
+use_1ms_timer()   # client-side sleeps and timings in every experiment process
 
 
 def base_parser(description: str) -> argparse.ArgumentParser:
