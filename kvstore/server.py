@@ -112,6 +112,7 @@ def build_app(node_id: str, config_path: str) -> web.Application:
             "versions": [v.to_dict() for v in versions],
             "context": context,
             "coordinator": me.id,
+            "policy": coordinator.conflict_policy,
         })
 
     async def kv_put(request: web.Request) -> web.Response:
