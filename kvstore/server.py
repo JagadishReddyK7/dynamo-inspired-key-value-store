@@ -19,6 +19,7 @@ from .coordinator import Coordinator, QuorumNotMet
 from .network_shim import FROM_HEADER, NetworkShim, PeerUnreachable
 from .ring import ConsistentHashRing
 from .storage import LocalStore, Version
+from .timer_resolution import use_1ms_timer
 
 CFG_KEY = web.AppKey("cfg", ClusterConfig)
 NODE_KEY = web.AppKey("node", NodeInfo)
@@ -219,6 +220,7 @@ def main() -> None:
     parser.add_argument("--node-id", required=True)
     parser.add_argument("--config", default=str(DEFAULT_CONFIG))
     args = parser.parse_args()
+    use_1ms_timer()   # accurate injected delays on Windows (see timer_resolution.py)
     app = build_app(args.node_id, args.config)
     node = app[NODE_KEY]
     web.run_app(app, host=node.host, port=node.port, print=None)
