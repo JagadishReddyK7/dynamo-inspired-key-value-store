@@ -26,16 +26,30 @@ python scripts\run_cluster.py  # start 5 nodes on ports 8001-8005 (Ctrl+C to sto
 | `kvstore/ring.py` | Consistent hashing, preference lists | B | ✅ done + tested |
 | `kvstore/config.py`, `config/cluster.json` | Static cluster config | B | ✅ done |
 | `scripts/run_cluster.py` | Launches all nodes as processes | B | ✅ done |
-| `kvstore/network_shim.py` | Partition and delay injection for all node-to-node traffic | B | ⏳ stub |
-| `kvstore/coordinator.py` | Quorum GET/PUT, background replication; read repair (A) | B / A | ⏳ stub |
-| `kvstore/server.py` | aiohttp routes (client, internal, admin) | B | ⏳ routes return 501 |
-| `client/client.py` | Client library with R/W settings, context, reconcile | C | ⏳ stub |
+| `kvstore/network_shim.py` | Partition and delay injection for all node-to-node traffic | B | ✅ done + tested |
+| `kvstore/coordinator.py` | Quorum GET/PUT, background replication; read repair (A) | B / A | ✅ done + tested |
+| `kvstore/server.py` | aiohttp routes (client, internal, admin) | B | ✅ done + tested |
+| `client/client.py` | Client library with R/W settings, context, reconcile | C | ✅ done + tested |
 | `experiments/oplog.py` | Shared CSV op-log format | C | ✅ done |
-| `experiments/{latency,stale_reads,availability}.py` | Experiments | C | ⏳ stub |
-| `experiments/partition_test.py` | Partition, update both sides, heal, verify the rule | A | ⏳ stub |
-| `experiments/plot.py` | Report figures | C | ⏳ stub |
+| `experiments/common.py` | Start/stop a real cluster, admin helpers | C | ✅ done |
+| `experiments/{latency,stale_reads,availability,concurrent_writes}.py` | Experiments | C | ✅ done |
+| `experiments/partition_test.py` | Partition, update both sides, heal, verify the rule | A | ✅ done (PASS/FAIL) |
+| `experiments/plot.py` | Report figures | C | ✅ done |
 
-Each stub's docstring describes the algorithm to implement.
+## Running the experiments
+
+Each script starts its own 5-node cluster (pass `--no-spawn` to use one already started with `scripts\run_cluster.py`) and writes CSVs to `results/`.
+
+```powershell
+python experiments\partition_test.py      # PASS/FAIL for both policies (siblings, lww)
+python experiments\latency.py             # p50/p95/p99 per (R, W)
+python experiments\stale_reads.py         # stale-read % per (R, W)
+python experiments\availability.py        # success rate with 0/1/2 replicas unreachable
+python experiments\concurrent_writes.py   # versions returned + lost updates, siblings vs lww
+python experiments\plot.py                # results\fig1..fig4 *.png
+```
+
+Each module's docstring describes its algorithm.
 
 ## Schedule (15 days)
 

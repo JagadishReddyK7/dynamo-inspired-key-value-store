@@ -24,7 +24,7 @@ A **context** is a vector clock as a JSON object (`{"c1": 2, "c2": 1}`). Clients
 - Under the `lww` policy, `versions` always has at most one entry.
 - `context` is the merge of **all** sibling clocks, computed before the policy is applied.
 
-**503**: `{"error": "quorum_not_met", "required": 2, "received": 1}`
+**503**: `{"error": "quorum_not_met", "required": 2, "received": 1}`. The coordinator fails as soon as the quorum becomes impossible, so `received` counts the replies that had arrived by then.
 **400**: `{"error": "bad_request", "detail": "..."}` (for example `r` out of range)
 
 ### `PUT /kv/{key}?w=<1..N>`
@@ -69,7 +69,7 @@ Both replication writes and read repair use `PUT /internal/replica`. The replica
 | `POST` | `/admin/partition` | `{"blocked": ["n4", "n5"]}` | This node drops all traffic to and from the listed nodes |
 | `POST` | `/admin/heal` | none | Clears this node's blocked set |
 | `POST` | `/admin/delay` | `{"min_ms": 5, "max_ms": 50}` | Each outgoing internal message sleeps for a uniform random time in this range |
-| `GET` | `/admin/state` | none | `{"node": "n1", "blocked": [...], "delay": {...}, "store": {key: [Version...]}}` |
+| `GET` | `/admin/state` | none | `{"node": "n1", "blocked": [...], "delay": {...}, "conflict_policy": "siblings", "store": {key: [Version...]}}` |
 | `GET` | `/health` | none | `{"node": "n1", "ok": true}` |
 
 **Delay applies to the coordinator's own replica too.** When the coordinator is itself one of the key's replicas, its local read or write goes through the shim with the same random delay. Otherwise the local copy always answers first, and results for W=1 and R=1 would mostly measure "which node did the client contact".
@@ -88,7 +88,8 @@ Both replication writes and read repair use `PUT /internal/replica`. The replica
 | Replication | The coordinator sends to all N replicas in parallel and replies after W acks. The other sends keep running in the background. |
 | Vector clock actor | **Client ID** (avoids lost updates that node-ID clocks allow) |
 | Conflict policy | Config `conflict_policy`: `siblings` (default, client reconciles) or `lww` (`max(timestamp_ms, coordinator)`) |
-| Convergence | Read repair on every GET. Anti-entropy is optional. |
+| Convergence | Read repair on every GET (after waiting, within the timeout, for late replies too). Anti-entropy is optional. |
+| Failed writes | A PUT that misses its quorum may still be applied on the replicas it reached (as in Dynamo). |
 | Stale read | A read that misses the latest write *acknowledged before the read was sent* |
 | Clock tracking | The client merges every clock it sees into a per-key `own_clock` and sends it on each PUT (client rule 3) |
 | Out of scope | Deletes and tombstones, persistence to disk, dynamic membership. State these in the report as deliberate limits. |
