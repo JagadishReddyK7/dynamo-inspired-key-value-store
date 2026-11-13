@@ -15,5 +15,6 @@ async def test_health_endpoint():
         resp = await client.get("/health")
         assert resp.status == 200
         assert await resp.json() == {"node": "n1", "ok": True}
-        # Placeholder until Person B implements the client API:
-        assert (await client.get("/kv/x")).status in (200, 501)
+        # Peers are not running here, so the quorum may or may not be met.
+        assert (await client.get("/kv/x?r=1")).status in (200, 503)
+        assert (await client.get("/kv/x?r=7")).status == 400
