@@ -3,7 +3,8 @@
 Scenarios: 0, 1, 2 replicas of the key unreachable. The k replicas are cut off
 with a symmetric /admin/partition; the client talks to a coordinator that is
 NOT a replica of the key and sits on the majority side.
-For each (R, W): success rate of gets and puts.
+For each (R, W): success rate of gets and puts, and their latency (the
+latency of operations while a partition is in place).
 
 Expected (strict quorum, N=3): an operation needing k acks fails once more than
 3 - k replicas are unreachable. E.g. W=3 fails with a single replica down.
@@ -73,19 +74,29 @@ async def run(args) -> Path:
 
 
 def summarise(csv_path: Path) -> pd.DataFrame:
+    """Success rate per (down, r, w, op), plus latency of the successful
+    operations (p50/p95) and of the failed ones (p50: how fast a client
+    learns that the quorum cannot be met)."""
     df = pd.read_csv(csv_path, keep_default_na=False)
     parts = df["experiment"].str.extract(r"avail_down(\d)_r(\d)w(\d)").astype(int)
     df[["down", "r", "w"]] = parts
-    table = (df.groupby(["down", "r", "w", "op"])["ok"].agg(["mean", "size"])
-             .rename(columns={"mean": "success_rate", "size": "ops"}).reset_index())
+    df["latency_ms"] = df["end_ms"].astype(float) - df["start_ms"].astype(float)
+    keys = ["down", "r", "w", "op"]
+    table = (df.groupby(keys)["ok"].agg(["mean", "size"])
+             .rename(columns={"mean": "success_rate", "size": "ops"}))
+    ok = df[df["ok"] == 1].groupby(keys)["latency_ms"]
+    table["ok_p50_ms"] = ok.median()
+    table["ok_p95_ms"] = ok.quantile(0.95)
+    table["fail_p50_ms"] = df[df["ok"] == 0].groupby(keys)["latency_ms"].median()
+    table = table.reset_index()
     need = table["r"].where(table["op"] == "get", table["w"])
     table["expected_ok"] = (N - table["down"]) >= need
-    return table.sort_values(["op", "down", "r", "w"]).round(3)
+    return table.sort_values(["op", "down", "r", "w"]).round(2)
 
 
 def main() -> None:
     p = base_parser(__doc__.splitlines()[0])
-    p.add_argument("--ops", type=int, default=20, help="gets and puts per (setting, scenario)")
+    p.add_argument("--ops", type=int, default=60, help="gets and puts per (setting, scenario)")
     p.add_argument("--workers", type=int, default=4)
     p.add_argument("--delay", type=int, nargs=2, default=[5, 50], metavar=("MIN", "MAX"))
     args = p.parse_args()

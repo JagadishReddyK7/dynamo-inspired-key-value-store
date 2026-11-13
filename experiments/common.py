@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import atexit
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -49,7 +51,15 @@ def config_variant(base: str | Path, **overrides) -> Path:
     fd, path = tempfile.mkstemp(prefix="cluster-", suffix=".json")
     with open(fd, "w", encoding="utf-8") as fh:
         json.dump(raw, fh)
+    atexit.register(_remove_quietly, path)   # nodes only read it at start-up
     return Path(path)
+
+
+def _remove_quietly(path: str) -> None:
+    try:
+        os.remove(path)
+    except OSError:
+        pass
 
 
 class Cluster:

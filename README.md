@@ -46,7 +46,13 @@ python experiments\latency.py             # p50/p95/p99 per (R, W)
 python experiments\stale_reads.py         # stale-read % per (R, W)
 python experiments\availability.py        # success rate with 0/1/2 replicas unreachable
 python experiments\concurrent_writes.py   # versions returned + lost updates, siblings vs lww
-python experiments\plot.py                # results\fig1..fig4 *.png
+python experiments\plot.py                # results\fig1..fig5 *.png
+```
+
+Or run everything (about 15 minutes, logs to `results\log_*.txt`):
+
+```powershell
+python scripts\run_experiments.py         # --quick for a 1-minute smoke test
 ```
 
 Each module's docstring describes its algorithm.
