@@ -169,8 +169,25 @@ class Coordinator:
 
     async def read_repair(self, key: str, versions: list[Version],
                           replies: dict[str, list[Version]]) -> None:
-        """Push `versions` to replicas that are missing any of them. TODO (Person A)."""
-        raise NotImplementedError
+        """Push `versions` to every replica whose reply is missing any of them.
+
+        A version is "missing" at a replica when none of that replica's versions
+        descends from it. Only the missing versions are sent; the replica's
+        put_many drops whatever it already supersedes.
+        """
+        sends = []
+        for node, held in replies.items():
+            missing = [v for v in versions
+                       if not any(h.clock.descends(v.clock) for h in held)]
+            if missing:
+                body = {"versions": [v.to_dict() for v in missing]}
+                sends.append(self.shim.send(node, "PUT", replica_path(key), body,
+                                            timeout_s=self.timeout_s))
+        if sends:
+            results = await asyncio.gather(*sends, return_exceptions=True)
+            for res in results:
+                if isinstance(res, BaseException) and not isinstance(res, PeerUnreachable):
+                    raise res
 
     async def close(self) -> None:
         tasks = list(self._background)
