@@ -24,6 +24,11 @@ Follows the client rules in docs/API.md:
   3. self._own_clock[key] merges every clock seen (GET context and the clock of
      the version in the PUT reply); on PUT we send
      merge(caller_context, self._own_clock[key]).
+  4. read-your-writes: self._last_written[key] is the version of this client's
+     last successful PUT. If a GET misses it (its context does not descend that
+     clock - possible when R + W <= N), the version is added to the result, so a
+     read-modify-write never drops the client's own previous write (rule 3
+     makes the next write supersede it).
 """
 
 from __future__ import annotations
@@ -39,6 +44,8 @@ from urllib.parse import quote
 
 import aiohttp
 
+from kvstore.policies import lww_winner
+from kvstore.storage import Version, reconcile
 from kvstore.vclock import VectorClock
 
 
@@ -52,6 +59,7 @@ class GetResult:
     versions: list[dict]           # [{"value", "clock", "timestamp_ms", "coordinator"}, ...]
     context: dict = field(default_factory=dict)
     coordinator: str = ""
+    own_write_added: bool = False  # rule 4: the read missed this client's last write
 
     @property
     def has_conflict(self) -> bool:
@@ -96,7 +104,7 @@ def _now_ms() -> float:
 class KVClient:
     def __init__(self, node_url: str | list[str], client_id: str | None = None,
                  r: int = 2, w: int = 2, timeout_s: float = 2.0,
-                 oplog=None, experiment: str = ""):
+                 oplog=None, experiment: str = "", read_your_writes: bool = True):
         urls = [node_url] if isinstance(node_url, str) else list(node_url)
         if not urls:
             raise ValueError("need at least one node url")
@@ -107,7 +115,9 @@ class KVClient:
         self.timeout_s = timeout_s
         self.oplog = oplog
         self.experiment = experiment
+        self.read_your_writes = read_your_writes  # False only to measure rule 4's effect
         self._own_clock: dict[str, dict] = {}   # key -> clock dict (client rule 3)
+        self._last_written: dict[str, dict] = {}  # key -> Version dict (client rule 4)
         self._write_lock = asyncio.Lock()        # client rule 1
         self._session: aiohttp.ClientSession | None = None
         self._owns_session = False
@@ -142,6 +152,23 @@ class KVClient:
     def _observe(self, key: str, clock: dict | None) -> None:
         merged = VectorClock.from_dict(self._own_clock.get(key)).merge(VectorClock.from_dict(clock))
         self._own_clock[key] = merged.to_dict()
+
+    # ---- read-your-writes (rule 4) -------------------------------------------------
+    def _read_your_writes(self, key: str, result: GetResult, policy: str) -> GetResult:
+        mine = self._last_written.get(key)
+        if mine is None or not self.read_your_writes:
+            return result
+        mine_v = Version.from_dict(mine)
+        if VectorClock.from_dict(result.context).descends(mine_v.clock):
+            return result
+        seen = [Version.from_dict(v) for v in result.versions]
+        if policy == "lww":
+            versions = [lww_winner(seen + [mine_v])]
+        else:
+            versions = reconcile(seen + [mine_v])
+        context = VectorClock.from_dict(result.context).merge(mine_v.clock).to_dict()
+        return GetResult(versions=[v.to_dict() for v in versions], context=context,
+                         coordinator=result.coordinator, own_write_added=True)
 
     # ---- HTTP -------------------------------------------------------------------
     def _pick_url(self) -> str:
@@ -193,6 +220,7 @@ class KVClient:
         result = GetResult(versions=data.get("versions", []),
                            context=data.get("context", {}) or {},
                            coordinator=data.get("coordinator", ""))
+        result = self._read_your_writes(key, result, data.get("policy", "siblings"))
         self._observe(key, result.context)
         self._log(op="get", key=key, node=result.coordinator or base, r=r,
                   start_ms=start, end_ms=end, ok=1,
@@ -225,6 +253,8 @@ class KVClient:
             end = _now_ms()
             version = data.get("version", {})
             self._observe(key, version.get("clock"))
+            if version:
+                self._last_written[key] = version
             self._log(op="put", key=key, node=version.get("coordinator") or base, w=w,
                       start_ms=start, end_ms=end, ok=1,
                       value=json.dumps(value, sort_keys=True))

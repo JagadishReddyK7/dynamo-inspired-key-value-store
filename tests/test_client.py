@@ -61,6 +61,37 @@ async def test_quorum_error_and_unavailable_node(cluster):
             await kv.get(key)
 
 
+async def _stale_read_of_own_write(c, kv, key):
+    """Write v0 everywhere, then let `kv` write 'mine' to replica a only, and
+    read back through a coordinator that reaches only replica b (stale)."""
+    a, b, rc = c.replicas(key)
+    coord = c.non_replica(key)
+    async with KVClient(c.urls[coord], w=3) as other:
+        await other.put(key, "v0")
+    await kv.get(key, r=3)                      # kv has seen v0
+    c.shim(coord).set_partition([b, rc])
+    await kv.put(key, "mine", w=1)              # lands on a only
+    c.shim(coord).set_partition([a, rc])
+    return await kv.get(key, r=1)               # only b answers: it has v0
+
+
+async def test_read_your_writes_restores_missed_own_write(cluster):
+    """Client rule 4: a read that misses the client's own write gets it added."""
+    async with KVClient(cluster.urls[cluster.non_replica("k")]) as kv:
+        res = await _stale_read_of_own_write(cluster, kv, "k")
+        assert res.own_write_added and res.values == ["mine"]
+        await kv.put("k", res.values[0] + "+more", context=res.context, w=1)
+    cluster.heal()
+    async with KVClient(cluster.urls["n1"], r=3) as reader:
+        assert (await reader.get("k")).values == ["mine+more"]
+
+
+async def test_read_your_writes_under_lww(lww_cluster):
+    async with KVClient(lww_cluster.urls[lww_cluster.non_replica("k")]) as kv:
+        res = await _stale_read_of_own_write(lww_cluster, kv, "k")
+        assert res.own_write_added and res.values == ["mine"]   # newer timestamp wins
+
+
 async def test_writes_from_one_client_are_serialised(cluster):
     """Client rule 1: concurrent put() calls on one client never overlap."""
     async with KVClient(cluster.urls["n1"], w=3) as kv:

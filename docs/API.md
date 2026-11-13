@@ -18,11 +18,12 @@ A **context** is a vector clock as a JSON object (`{"c1": 2, "c2": 1}`). Clients
 
 **200** (a missing key returns `versions: []` and `context: {}`):
 ```json
-{"key": "cart", "versions": [<Version>, ...], "context": {"c1": 2, "c2": 1}, "coordinator": "n2"}
+{"key": "cart", "versions": [<Version>, ...], "context": {"c1": 2, "c2": 1}, "coordinator": "n2", "policy": "siblings"}
 ```
 - More than one entry in `versions` means **siblings** (concurrent versions). The client must reconcile them.
 - Under the `lww` policy, `versions` always has at most one entry.
 - `context` is the merge of **all** sibling clocks, computed before the policy is applied.
+- `policy` is the cluster's conflict policy; the client needs it to apply read-your-writes (client rule 4).
 
 **503**: `{"error": "quorum_not_met", "required": 2, "received": 1}`. The coordinator fails as soon as the quorum becomes impossible, so `received` counts the replies that had arrived by then.
 **400**: `{"error": "bad_request", "detail": "..."}` (for example `r` out of range)
@@ -43,6 +44,9 @@ Request body:
 3. **The client tracks its own clock per key.** It merges the clock of every version it receives (from GET contexts and PUT responses) into `own_clock[key]`. On every PUT it sends `merge(context_given_by_caller, own_clock[key])`.
 
    *Why:* without rule 3, two blind writes from `c1` both get the clock `{c1:1}`. The replica treats the second as a duplicate of the first and **silently drops it** (see `test_blind_writes_without_client_tracking_are_lost` in `tests/test_storage.py`). Merging in the client's own clock makes each write by the same client supersede its previous one, which is correct because that client's writes are sequential.
+4. **Read-your-writes.** The client keeps the version returned by its last PUT per key. If a GET's context does not descend that version's clock (the read missed the client's own write, possible when R + W <= N), the client adds that version to the result: as a sibling under `siblings` (dropping the versions it supersedes), or as the LWW candidate under `lww`.
+
+   *Why:* rule 3 makes the client's next write supersede its previous one. If that next write is a read-modify-write built on a read that missed the previous write, the previous write's content is silently lost. Measured before this rule: 1 of 60 acknowledged items lost with R = W = 1 in `experiments/concurrent_writes.py`.
 
 **200**: `{"key": "cart", "version": <Version>, "acks": 2}`
 **503 / 400**: same formats as for GET.
